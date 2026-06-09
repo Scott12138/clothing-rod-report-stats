@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.exe
+*.spec
+build/
+dist/
+.DS_Store
+*.xlsx
+*.csv
+!test_data.xlsx

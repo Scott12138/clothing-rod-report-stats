@@ -1,0 +1,44 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:   # 支持手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl pyinstaller
+
+      - name: 构建 EXE
+        run: |
+          pyinstaller --onefile `
+            --name "衣杆报表统计" `
+            --add-data "remark_stats.py;." `
+            --hidden-import pandas `
+            --hidden-import openpyxl `
+            --hidden-import tkinter `
+            --hidden-import tkinter.filedialog `
+            --clean `
+            --noconfirm `
+            remark_stats.py
+
+      - name: 上传 EXE 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 衣杆报表统计-Windows
+          path: dist/衣杆报表统计.exe
+          retention-days: 90
