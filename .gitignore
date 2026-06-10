@@ -9,3 +9,8 @@ dist/
 *.xlsx
 *.csv
 !test_data.xlsx
+*.zip
+*.exe
+.gitignore
+例表
+统计器版本
