@@ -1,5 +1,5 @@
 """
-衣杆报表统计 v3
+衣杆报表统计 v4
 ==================================================
 运行方式：python3 remark_stats.py
   - 弹出文件选择窗口 → 选择 xlsx / csv 源表
@@ -9,7 +9,8 @@
       F:顶装半通总数   G:顶装全通总数   H:顶装转角总数
       I:中托总数   J:螺丝总数
       + 核对列：原始备注
-  - 输出文件：源文件名（统计明细表）.xlsx（存在源文件同目录）
+  - 输出文件1：源文件名（明细表）.xlsx
+  - 输出文件2：源文件名（米数统计表）.xlsx  ← 按款式+颜色聚合，格式与目标表一致
 """
 
 import os, re, sys
@@ -54,7 +55,8 @@ if ext not in (".xlsx", ".csv"):
 
 source_dir  = os.path.dirname(SOURCE)
 source_base = os.path.splitext(os.path.basename(SOURCE))[0]
-OUTPUT      = os.path.join(source_dir, f"{source_base}（统计明细表）.xlsx")
+OUTPUT      = os.path.join(source_dir, f"{source_base}（明细表）.xlsx")
+OUTPUT_STAT = os.path.join(source_dir, f"{source_base}（米数统计表）.xlsx")
 print(f"📂 源文件：{SOURCE}")
 print(f"📝 输出  ：{OUTPUT}")
 
@@ -226,13 +228,14 @@ def parse_remark(raw):
         if "螺丝" in n:
             luosi += qty
         else:
-            # 顶装配件：半通/全通/转角 可能共存于一个 token
-            if "半通" in n:
-                bantong += qty
-            if "全通" in n:
-                quantong += qty
+            # 顶装配件分类规则（互斥优先级：转角 > 全通 > 半通）
+            # "半通转角顶装" 含 转角 → 只算顶装转角，不算顶装半通
             if "转角" in n:
                 zhuanjiao += qty
+            elif "全通" in n:
+                quantong += qty
+            elif "半通" in n:
+                bantong += qty
             if "中托" in n:
                 zhongtuo += qty
 
@@ -291,7 +294,7 @@ def thin_border():
 
 wb = Workbook()
 ws = wb.active
-ws.title = "统计明细"
+ws.title = "明细表"
 ws.freeze_panes = "A3"
 
 ncols = len(DISPLAY_COLS)
@@ -299,7 +302,7 @@ col_letter = get_column_letter(ncols)
 
 # 标题行
 ws.merge_cells(f"A1:{col_letter}1")
-tc = ws.cell(1, 1, f"{source_base} — 商家备注统计明细")
+tc = ws.cell(1, 1, f"{source_base} — 商家备注明细")
 tc.font      = Font(bold=True, size=14, color="FFFFFF")
 tc.fill      = PatternFill("solid", start_color=HDR_BG)
 tc.alignment = CENTER_ALIGN
@@ -350,5 +353,148 @@ for ci, key in enumerate(DISPLAY_COLS, 1):
     ws.column_dimensions[get_column_letter(ci)].width = COL_WIDTHS.get(key, 14)
 
 wb.save(OUTPUT)
-print(f"\n🎉 输出：{OUTPUT}")
-show_info(f"统计完成！\n共 {len(df_out)} 行明细\n\n输出文件：\n{OUTPUT}")
+print(f"\n🎉 输出明细表：{OUTPUT}")
+
+
+# ══════════════════════════════════════════════
+# 6. 生成米数统计表（按款式+颜色聚合，格式与目标表一致）
+# ══════════════════════════════════════════════
+
+# 目标表固定结构：4 种款式，每种 4 色，款式间空行
+STAT_STYLES = ["X3150", "M335", "6号威法", "2mm"]
+STAT_COLORS = ["白", "灰", "黑", "香槟/金"]
+STAT_COLS   = [
+    "款式", "颜色", "米数总计",
+    "底座总数", "全包围底座总数",
+    "顶装半通总数", "顶装全通总数", "顶装转角总数",
+    "中托总数", "螺丝总数",
+]
+NUM_STAT_COLS = STAT_COLS[2:]   # C~J 为数值列
+
+# ── 聚合明细表 ──
+AGG_KEYS = ["米数总计", "底座总数", "全包围底座总数",
+            "顶装半通总数", "顶装全通总数", "顶装转角总数",
+            "中托总数", "螺丝总数"]
+
+# 把空字符串替换为 0，再做 groupby sum
+df_agg = df_out[["款式", "颜色"] + AGG_KEYS].copy()
+for k in AGG_KEYS:
+    df_agg[k] = pd.to_numeric(df_agg[k], errors="coerce").fillna(0)
+
+df_sum = df_agg.groupby(["款式", "颜色"], sort=False)[AGG_KEYS].sum().reset_index()
+
+# ── 写统计表 Excel ──
+wb2  = Workbook()
+ws2  = wb2.active
+ws2.title = "米数统计表"
+ws2.freeze_panes = "A3"
+
+ncols2      = len(STAT_COLS)
+col_letter2 = get_column_letter(ncols2)
+
+HDR_BG2 = "1F4E79"; SUB_BG2 = "2E75B6"
+STYLE_BG  = "D6E4F0"   # 每个款式第一行（含款式名）的浅蓝背景
+EMPTY_BG  = "F5F5F5"   # 空行背景
+ODD_BG2   = "EBF3FB"; EVEN_BG2 = "FFFFFF"
+
+# 大标题行
+ws2.merge_cells(f"A1:{col_letter2}1")
+tc2 = ws2.cell(1, 1, f"{source_base} — 按款式米数统计表")
+tc2.font      = Font(bold=True, size=14, color="FFFFFF")
+tc2.fill      = PatternFill("solid", start_color=HDR_BG2)
+tc2.alignment = CENTER_ALIGN
+ws2.row_dimensions[1].height = 30
+
+# 表头行
+for ci, col in enumerate(STAT_COLS, 1):
+    c = ws2.cell(2, ci, col)
+    c.font      = Font(bold=True, size=10, color="FFFFFF")
+    c.fill      = PatternFill("solid", start_color=SUB_BG2)
+    c.alignment = CENTER_ALIGN
+    c.border    = thin_border()
+ws2.row_dimensions[2].height = 26
+
+# 数据行：按目标表结构填充（款式固定顺序，颜色固定顺序，中间空行）
+data_row = 3   # 从第3行开始写数据
+color_count = 0   # 当前款式已写颜色行数（用于斑马纹）
+
+for si, style in enumerate(STAT_STYLES):
+    color_count = 0
+    style_has_data = False   # 标记该款式是否有任何有效行
+
+    for color in STAT_COLORS:
+        # 查聚合结果
+        matched = df_sum[(df_sum["款式"] == style) & (df_sum["颜色"] == color)]
+
+        # 米数为 0（无该款式+颜色的订单）→ 跳过，不写行
+        mi_val = float(matched["米数总计"].iloc[0]) if len(matched) > 0 else 0
+        if mi_val == 0:
+            continue
+
+        style_has_data = True
+
+        # 斑马纹
+        bg = ODD_BG2 if color_count % 2 == 0 else EVEN_BG2
+        color_count += 1
+
+        for ci, key in enumerate(STAT_COLS, 1):
+            if key == "款式":
+                val = style
+            elif key == "颜色":
+                val = color
+            else:
+                val = float(matched[key].iloc[0]) if len(matched) > 0 else 0
+                # 米数保留2位小数，其余整数
+                if key == "米数总计":
+                    val = round(val, 2) if val != 0 else ""
+                else:
+                    val = int(val) if val != 0 else ""
+
+            c = ws2.cell(data_row, ci, val)
+            c.font   = Font(size=10)
+            c.fill   = PatternFill("solid", start_color=bg)
+            c.border = thin_border()
+            if key in ("款式", "颜色"):
+                c.alignment = CENTER_ALIGN
+            elif key in NUM_STAT_COLS:
+                c.alignment = RIGHT_ALIGN
+            else:
+                c.alignment = LEFT_ALIGN
+
+        data_row += 1
+
+    # 款式之间插入空行（该款式有数据 且 不是最后一个款式）
+    if style_has_data and si < len(STAT_STYLES) - 1:
+        # 检查后续款式是否还有数据，有才加空行
+        has_next_data = any(
+            float(df_sum[(df_sum["款式"] == ns) & (df_sum["颜色"] == nc)]["米数总计"].iloc[0])
+            if len(df_sum[(df_sum["款式"] == ns) & (df_sum["颜色"] == nc)]) > 0 else 0
+            for ns in STAT_STYLES[si+1:]
+            for nc in STAT_COLORS
+        )
+        if has_next_data:
+            for ci in range(1, ncols2 + 1):
+                c = ws2.cell(data_row, ci, "")
+                c.fill   = PatternFill("solid", start_color=EMPTY_BG)
+                c.border = thin_border()
+            ws2.row_dimensions[data_row].height = 8
+            data_row += 1
+
+# 列宽（与明细表一致）
+COL_WIDTHS2 = {
+    "款式": 10, "颜色": 8, "米数总计": 10,
+    "底座总数": 10, "全包围底座总数": 14,
+    "顶装半通总数": 12, "顶装全通总数": 12, "顶装转角总数": 12,
+    "中托总数": 10, "螺丝总数": 10,
+}
+for ci, key in enumerate(STAT_COLS, 1):
+    ws2.column_dimensions[get_column_letter(ci)].width = COL_WIDTHS2.get(key, 14)
+
+wb2.save(OUTPUT_STAT)
+print(f"🎉 输出米数统计表：{OUTPUT_STAT}")
+show_info(
+    f"统计完成！\n"
+    f"共 {len(df_out)} 行明细\n\n"
+    f"📋 明细表：{OUTPUT}\n"
+    f"📊 米数统计表：{OUTPUT_STAT}"
+)
